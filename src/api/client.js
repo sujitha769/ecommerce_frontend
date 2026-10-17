@@ -1,4 +1,12 @@
-const API = '/api';
+
+const SERVICES = {
+  PRODUCT: 'https://suzi-ecom-product.onrender.com',
+  USER: 'https://suzi-ecom-user.onrender.com',
+  CART: 'https://suzi-ecom-cart.onrender.com',
+  ORDER: 'https://suzi-ecom-order.onrender.com',
+  INVENTORY: 'https://suzi-ecom-inventory.onrender.com',
+  PAYMENT: 'https://suzi-ecom-payment.onrender.com',
+};
 
 export const MOCK = {
   AUTH: false,
@@ -41,13 +49,14 @@ export class ApiError extends Error {
 }
 
 async function request(
+  baseUrl,
   path,
   { method = 'GET', body, auth = true } = {}
 ) {
   let response;
 
   try {
-    response = await fetch(`${API}${path}`, {
+    response = await fetch(`${baseUrl}${path}`, {
       method,
       headers: {
         ...(body !== undefined
@@ -61,7 +70,7 @@ async function request(
     });
   } catch {
     throw new ApiError(
-      'Cannot reach the server. Check that the required service is running.',
+      'Cannot reach the server. Check the service URL and CORS configuration.',
       0
     );
   }
@@ -81,42 +90,83 @@ async function request(
   return data;
 }
 
-/* ---------------- AUTH: REAL BACKEND ---------------- */
+async function authRequest(path, body) {
+  let response;
 
-const fromAuthResponse = (response) => ({
-  user: {
-    id: response.userId,
-    name: response.name,
-    email: response.email,
-  },
-  token: response.accessToken,
-});
+  try {
+    response = await fetch(`${SERVICES.USER}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(
+      'Cannot reach User Service. Check its URL and CORS configuration.',
+      0
+    );
+  }
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new ApiError(
+      data.message ||
+        data.detail ||
+        data.error ||
+        `Authentication failed (${response.status})`,
+      response.status
+    );
+  }
+
+  return data;
+}
+
+/* ---------------- AUTH ---------------- */
+
+const fromAuthResponse = (response) => {
+  const token = response.accessToken;
+
+  if (!token) {
+    throw new ApiError(
+      'Authentication succeeded, but the response did not contain accessToken. Check the User Service response format.',
+      500
+    );
+  }
+
+  return {
+    user: {
+      id: response.userId ?? response.id,
+      name: response.name,
+      email: response.email,
+    },
+    token,
+  };
+};
 
 export async function registerUser({ name, email, password }) {
-  const response = await request('/auth/register', {
-    method: 'POST',
-    auth: false,
-    body: { name, email, password },
+  const response = await authRequest('/api/auth/register', {
+    name,
+    email,
+    password,
   });
 
   return fromAuthResponse(response);
 }
 
 export async function loginUser({ email, password }) {
-  const response = await request('/auth/login', {
-    method: 'POST',
-    auth: false,
-    body: { email, password },
+  const response = await authRequest('/api/auth/login', {
+    email,
+    password,
   });
 
   return fromAuthResponse(response);
 }
 
 export async function fetchMe() {
-  return request('/users/me');
+  return request(SERVICES.USER, '/api/users/me');
 }
 
-/* ---------------- PRODUCTS: REAL BACKEND ---------------- */
+/* ---------------- PRODUCTS ---------------- */
 
 export async function fetchProducts({
   q = '',
@@ -134,13 +184,15 @@ export async function fetchProducts({
 
   const query = params.toString();
 
-  return request(`/products${query ? `?${query}` : ''}`, {
-    auth: false,
-  });
+  return request(
+    SERVICES.PRODUCT,
+    `/api/products${query ? `?${query}` : ''}`,
+    { auth: false }
+  );
 }
 
 export async function fetchProduct(id) {
-  return request(`/products/${id}`, {
+  return request(SERVICES.PRODUCT, `/api/products/${id}`, {
     auth: false,
   });
 }
@@ -162,7 +214,7 @@ export async function createProduct(product, image) {
   let response;
 
   try {
-    response = await fetch(`${API}/products`, {
+    response = await fetch(`${SERVICES.PRODUCT}/api/products`, {
       method: 'POST',
       headers: getToken()
         ? { Authorization: `Bearer ${getToken()}` }
@@ -178,6 +230,7 @@ export async function createProduct(product, image) {
   if (!response.ok) {
     throw new ApiError(
       data.message ||
+        data.detail ||
         data.error ||
         `Product creation failed (${response.status})`,
       response.status
@@ -195,26 +248,22 @@ export const loadCart = (userId) =>
 export const saveCart = (userId, items) =>
   write(`shop_cart_${userId}`, items);
 
-/* ---------------- CART: REAL BACKEND ---------------- */
+/* ---------------- CART: BACKEND ---------------- */
 
 export async function fetchBackendCart(userId) {
   if (!userId) {
     throw new ApiError('Please log in to view your cart.', 401);
   }
 
-  return request(`/cart/${userId}`);
+  return request(SERVICES.CART, `/api/cart/${userId}`);
 }
 
-export async function addBackendCartItem(
-  userId,
-  productId,
-  quantity
-) {
+export async function addBackendCartItem(userId, productId, quantity) {
   if (!userId) {
     throw new ApiError('Please log in to add items to your cart.', 401);
   }
 
-  return request(`/cart/${userId}/items`, {
+  return request(SERVICES.CART, `/api/cart/${userId}/items`, {
     method: 'POST',
     body: {
       productId: Number(productId),
@@ -223,21 +272,19 @@ export async function addBackendCartItem(
   });
 }
 
-export async function updateBackendCartItem(
-  userId,
-  itemId,
-  quantity
-) {
+export async function updateBackendCartItem(userId, itemId, quantity) {
   if (!userId) {
     throw new ApiError('Please log in to update your cart.', 401);
   }
 
-  return request(`/cart/${userId}/items/${itemId}`, {
-    method: 'PUT',
-    body: {
-      quantity: Number(quantity),
-    },
-  });
+  return request(
+    SERVICES.CART,
+    `/api/cart/${userId}/items/${itemId}`,
+    {
+      method: 'PUT',
+      body: { quantity: Number(quantity) },
+    }
+  );
 }
 
 export async function removeBackendCartItem(userId, itemId) {
@@ -245,16 +292,18 @@ export async function removeBackendCartItem(userId, itemId) {
     throw new ApiError('Please log in to update your cart.', 401);
   }
 
-  return request(`/cart/${userId}/items/${itemId}`, {
-    method: 'DELETE',
-  });
+  return request(
+    SERVICES.CART,
+    `/api/cart/${userId}/items/${itemId}`,
+    { method: 'DELETE' }
+  );
 }
 
-/* ---------------- ORDERS: REAL BACKEND ---------------- */
+/* ---------------- ORDERS ---------------- */
 
 /**
- * Order Service reads items from the backend Cart Service.
- * The frontend must synchronize its cart before calling this function.
+ * The Order Service is expected to read items from the Cart Service.
+ * Synchronize the backend cart before checkout.
  */
 export async function createOrder(
   userId,
@@ -268,13 +317,17 @@ export async function createOrder(
     throw new ApiError('Please select a payment method.', 400);
   }
 
-  const order = await request(`/orders/checkout/${userId}`, {
-    method: 'POST',
-    body: {
-      paymentMethod,
-      simulateFailure: false,
-    },
-  });
+  const order = await request(
+    SERVICES.ORDER,
+    `/api/orders/checkout/${userId}`,
+    {
+      method: 'POST',
+      body: {
+        paymentMethod,
+        simulateFailure: false,
+      },
+    }
+  );
 
   if (order.status === 'CANCELLED') {
     throw new ApiError(
@@ -311,5 +364,5 @@ export async function fetchOrders(userId) {
     throw new ApiError('Please log in to view your orders.', 401);
   }
 
-  return request(`/orders/user/${userId}`);
+  return request(SERVICES.ORDER, `/api/orders/user/${userId}`);
 }
